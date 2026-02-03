@@ -1,7 +1,8 @@
-use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
+use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::ui::{AlignItems, BackgroundColor, JustifyContent, Node, PositionType, Val};
 use image::GenericImage;
 
 mod player;
@@ -15,7 +16,7 @@ use player::{
 };
 use terrain::height_at;
 use voxel::{
-    Block, Chunk, Crosshair, InteractionCooldown, PreviewBlock, SelectedBlock, WorldState,
+    Block, Chunk, InteractionCooldown, PreviewBlock, SelectedBlock, WorldState,
     block_interaction_system, build_chunk_mesh, build_single_block_mesh, chunk_loading_system,
 };
 
@@ -47,6 +48,8 @@ const CROUCH_HALF_SIZE: Vec3 = Vec3::new(0.3 * BLOCK_SIZE, 0.45 * BLOCK_SIZE, 0.
 const STAND_EYE_HEIGHT: f32 = 1.8 * BLOCK_SIZE;
 // Eye height when crouching (in world units).
 const CROUCH_EYE_HEIGHT: f32 = 0.8 * BLOCK_SIZE;
+// Shadow map resolution for directional light (lower = faster).
+const SHADOW_MAP_SIZE: usize = 256;
 
 // App entry point and system registration.
 fn main() {
@@ -67,7 +70,7 @@ fn main() {
                 block_interaction_system,
             ),
         )
-        .add_systems(PostUpdate, (preview_follow_system, crosshair_follow_system))
+        .add_systems(PostUpdate, (preview_follow_system, sun_billboard_system))
         .run();
 }
 
@@ -83,8 +86,12 @@ fn setup_scene(
     // Global ambient light to avoid fully black backfaces.
     commands.insert_resource(bevy::light::GlobalAmbientLight {
         color: Color::srgb(0.8, 0.8, 0.8),
-        brightness: 140.0,
+        brightness: 10_000.0,
         affects_lightmapped_meshes: true,
+    });
+    // Reduce shadow map resolution to improve performance.
+    commands.insert_resource(bevy::light::DirectionalLightShadowMap {
+        size: SHADOW_MAP_SIZE,
     });
     // Shared material for world blocks.
     let atlas = build_texture_atlas();
@@ -99,12 +106,6 @@ fn setup_scene(
     });
     // Preview block uses the same material as the world.
     let preview_material_handle = material.clone();
-    // Unlit material for the crosshair.
-    let crosshair_material = materials.add(bevy::pbr::StandardMaterial {
-        base_color: Color::WHITE,
-        unlit: true,
-        ..default()
-    });
     // Initialize world state and dynamic chunk tracking.
     let mut world_state = WorldState {
         chunks: std::collections::HashMap::new(),
@@ -151,24 +152,37 @@ fn setup_scene(
     commands.insert_resource(world_state);
 
     // Sun-like directional light.
+    let sun_position = Vec3::new(60.0, 50.0, 60.0);
     commands.spawn((
         bevy::light::DirectionalLight {
-            illuminance: 90_000.0,
+            illuminance: 30_000.0,
             color: Color::srgb(1.0, 0.98, 0.95),
-            shadows_enabled: false,
+            shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(6.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(sun_position).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    let sun_texture = images.add(build_sun_texture(256));
+    let sun_material = materials.add(bevy::pbr::StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(sun_texture),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+    let sun_mesh = meshes.add(build_sun_quad(20.0));
     commands.spawn((
-        bevy::light::DirectionalLight {
-            illuminance: 18_000.0,
-            color: Color::srgb(0.9, 0.95, 1.0),
-            shadows_enabled: false,
-            ..default()
+        bevy::mesh::Mesh3d(sun_mesh),
+        bevy::pbr::MeshMaterial3d(sun_material),
+        Transform::from_translation(Vec3::ZERO),
+        bevy::light::NotShadowCaster,
+        SunBillboard {
+            direction: (sun_position - Vec3::ZERO).normalize_or_zero(),
+            distance: 200.0,
         },
-        Transform::from_xyz(-6.0, -10.0, -6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    // No secondary fill light.
 
     // Player body spawn positioned above terrain.
     let spawn_x_block = 4;
@@ -206,7 +220,6 @@ fn setup_scene(
             spawn_z,
         ),
         FlyCamera {
-            speed: 10.0,
             sensitivity: 0.002,
             pitch: -0.35,
             yaw: -2.3,
@@ -223,28 +236,7 @@ fn setup_scene(
         PreviewBlock,
     ));
 
-    // 3D crosshair (line list).
-    let mut crosshair = Mesh::new(
-        bevy::render::render_resource::PrimitiveTopology::LineList,
-        bevy::asset::RenderAssetUsages::default(),
-    );
-    let size = 0.05 * BLOCK_SIZE;
-    let positions = vec![
-        [-size, 0.0, 0.0],
-        [size, 0.0, 0.0],
-        [0.0, -size, 0.0],
-        [0.0, size, 0.0],
-    ];
-    let indices = vec![0, 1, 2, 3];
-    crosshair.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    crosshair.insert_indices(bevy::mesh::Indices::U32(indices));
-    let crosshair_mesh = meshes.add(crosshair);
-    commands.spawn((
-        bevy::mesh::Mesh3d(crosshair_mesh),
-        bevy::pbr::MeshMaterial3d(crosshair_material),
-        Transform::from_xyz(2.0, 2.0, 1.2),
-        Crosshair,
-    ));
+    spawn_crosshair_ui(&mut commands);
 }
 
 // Lock and hide cursor for mouse look.
@@ -278,20 +270,85 @@ fn preview_follow_system(
     preview_transform.rotation = camera_transform.rotation;
 }
 
-// Keep the crosshair aligned to the camera.
-fn crosshair_follow_system(
-    camera_query: Query<&Transform, (With<FlyCamera>, Without<Crosshair>)>,
-    mut crosshair_query: Query<&mut Transform, (With<Crosshair>, Without<FlyCamera>)>,
+// Build a fixed UI crosshair (white outline + black core).
+fn spawn_crosshair_ui(commands: &mut Commands) {
+    let outer_len = Val::Px(16.0);
+    let outer_thick = Val::Px(3.0);
+    let inner_len = Val::Px(10.0);
+    let inner_thick = Val::Px(2.0);
+
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|parent| {
+            // White outline lines.
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: outer_len,
+                    height: outer_thick,
+                    ..default()
+                },
+                BackgroundColor(Color::WHITE),
+            ));
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: outer_thick,
+                    height: outer_len,
+                    ..default()
+                },
+                BackgroundColor(Color::WHITE),
+            ));
+
+            // Black core lines.
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: inner_len,
+                    height: inner_thick,
+                    ..default()
+                },
+                BackgroundColor(Color::BLACK),
+            ));
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: inner_thick,
+                    height: inner_len,
+                    ..default()
+                },
+                BackgroundColor(Color::BLACK),
+            ));
+        });
+}
+
+#[derive(Component)]
+struct SunBillboard {
+    direction: Vec3,
+    distance: f32,
+}
+
+// Keep the sun quad at a fixed direction relative to the camera.
+fn sun_billboard_system(
+    camera_query: Query<&Transform, (With<FlyCamera>, Without<SunBillboard>)>,
+    mut sun_query: Query<(&SunBillboard, &mut Transform)>,
 ) {
     let Ok(camera_transform) = camera_query.single() else {
         return;
     };
-    let Ok(mut crosshair_transform) = crosshair_query.single_mut() else {
-        return;
-    };
-    let forward: Vec3 = camera_transform.forward().as_vec3();
-    crosshair_transform.translation = camera_transform.translation + forward * (BLOCK_SIZE * 1.5);
-    crosshair_transform.rotation = camera_transform.rotation;
+    for (sun, mut transform) in &mut sun_query {
+        transform.translation = camera_transform.translation + sun.direction * sun.distance;
+        transform.look_at(camera_transform.translation, Vec3::Y);
+    }
 }
 
 // Build a 1x3 texture atlas for grass side/top and dirt (pixel-art style).
@@ -306,9 +363,7 @@ fn build_texture_atlas() -> Image {
     atlas
         .copy_from(&grass_top, tile_w, 0)
         .expect("copy grass top");
-    atlas
-        .copy_from(&dirt, tile_w * 2, 0)
-        .expect("copy dirt");
+    atlas.copy_from(&dirt, tile_w * 2, 0).expect("copy dirt");
 
     let size = Extent3d {
         width: atlas.width(),
@@ -332,4 +387,64 @@ fn load_rgba(path: &str) -> image::RgbaImage {
     let bytes = std::fs::read(path).expect("texture file not found");
     let img = image::load_from_memory(&bytes).expect("decode texture");
     img.to_rgba8()
+}
+
+// Build a circular sun texture with a soft edge.
+fn build_sun_texture(size: u32) -> Image {
+    let mut data = vec![0u8; (size * size * 4) as usize];
+    let center = (size as f32 - 1.0) * 0.5;
+    let radius = size as f32 * 0.4;
+    let feather = size as f32 * 0.05;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let t = ((radius - dist) / feather).clamp(0.0, 1.0);
+            let alpha = (t * t * (3.0 - 2.0 * t) * 255.0) as u8;
+            let idx = ((y * size + x) * 4) as usize;
+            data[idx] = 255;
+            data[idx + 1] = 245;
+            data[idx + 2] = 220;
+            data[idx + 3] = alpha;
+        }
+    }
+    let size = Extent3d {
+        width: size,
+        height: size,
+        depth_or_array_layers: 1,
+    };
+    let mut image = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    image.data = Some(data);
+    image.sampler = ImageSampler::linear();
+    image
+}
+
+// Build a simple quad mesh facing +Z.
+fn build_sun_quad(size: f32) -> Mesh {
+    let half = size * 0.5;
+    let positions = vec![
+        [-half, -half, 0.0],
+        [half, -half, 0.0],
+        [half, half, 0.0],
+        [-half, half, 0.0],
+    ];
+    let normals = vec![[0.0, 0.0, 1.0]; 4];
+    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let indices = vec![0u32, 1, 2, 0, 2, 3];
+    let mut mesh = Mesh::new(
+        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+    mesh
 }

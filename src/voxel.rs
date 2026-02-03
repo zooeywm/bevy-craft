@@ -51,8 +51,6 @@ pub struct InteractionCooldown {
 #[derive(Component)]
 pub struct PreviewBlock;
 
-#[derive(Component)]
-pub struct Crosshair;
 
 pub struct MeshData {
     positions: Vec<[f32; 3]>,
@@ -286,6 +284,7 @@ fn mesh_from_data(data: MeshData) -> Mesh {
 }
 
 // Add a single quad face to mesh buffers.
+#[allow(clippy::too_many_arguments)]
 fn add_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
@@ -314,7 +313,7 @@ fn add_face(
 }
 
 // Color blocks with small jitter for visual variation.
-fn face_color(block: Block, normal: [f32; 3], x: i32, y: i32, z: i32) -> [f32; 4] {
+fn face_color(block: Block, normal: [f32; 3], _x: i32, _y: i32, _z: i32) -> [f32; 4] {
     match block {
         Block::Grass => {
             if normal[1] > 0.5 {
@@ -707,6 +706,7 @@ pub fn chunk_loading_system(
 }
 
 // Handle block breaking/placing with cooldown and preview updates.
+#[allow(clippy::too_many_arguments)]
 pub fn block_interaction_system(
     mut commands: Commands,
     buttons: Res<ButtonInput<MouseButton>>,

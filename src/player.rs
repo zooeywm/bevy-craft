@@ -1,14 +1,13 @@
 use bevy::prelude::*;
 
+use crate::voxel::{WorldState, is_solid_world};
 use crate::{
     CROUCH_EYE_HEIGHT, CROUCH_HALF_SIZE, CROUCH_TRANSITION_SPEED, GRAVITY, JUMP_BOOST_ACCEL,
     JUMP_BOOST_DURATION, STAND_EYE_HEIGHT, STAND_HALF_SIZE,
 };
-use crate::voxel::{is_solid_world, WorldState};
 
 #[derive(Component)]
 pub struct FlyCamera {
-    pub speed: f32,
     pub sensitivity: f32,
     pub pitch: f32,
     pub yaw: f32,
@@ -59,6 +58,7 @@ pub fn camera_look_system(
 }
 
 // Keep the camera positioned at the player's eye height.
+#[allow(clippy::type_complexity)]
 pub fn camera_follow_system(
     mut camera_query: Query<(&mut Transform, &FlyCamera), Without<PlayerBody>>,
     body_query: Query<(&Transform, &Player), (With<PlayerBody>, Without<FlyCamera>)>,
