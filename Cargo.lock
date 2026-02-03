@@ -672,6 +672,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_craft"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "futures-lite",
+ "image",
+]
+
+[[package]]
 name = "bevy_derive"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2648,15 +2657,6 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
-]
-
-[[package]]
-name = "game_demo"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "futures-lite",
- "image",
 ]
 
 [[package]]
