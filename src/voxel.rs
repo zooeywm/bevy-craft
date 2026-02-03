@@ -5,7 +5,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::player::{Player, PlayerBody};
 use crate::terrain::height_at;
-use crate::{BLOCK_SIZE, CHUNK_SIZE, LOADS_PER_FRAME, MAX_IN_FLIGHT, VIEW_DISTANCE};
+use crate::{
+    BLOCK_SIZE, CHUNK_SIZE, LOADS_PER_FRAME, MAX_IN_FLIGHT, VIEW_DISTANCE,
+    VERTICAL_CHUNK_LAYERS,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Block {
@@ -66,6 +69,7 @@ pub struct ChunkBuildOutput {
 }
 
 impl Chunk {
+    // Generate terrain blocks for a chunk based on heightmap.
     pub fn new_terrain(coord: IVec3) -> Self {
         let blocks = vec![Block::Air; (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize];
         let mut chunk = Self { blocks };
@@ -92,19 +96,23 @@ impl Chunk {
         chunk
     }
 
+    // Create an empty (all air) chunk.
     pub fn new_empty() -> Self {
         let blocks = vec![Block::Air; (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize];
         Self { blocks }
     }
 
+    // Convert 3D local coordinates to linear index.
     fn index(x: i32, y: i32, z: i32) -> usize {
         (x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE) as usize
     }
 
+    // Check if local coordinates are inside chunk bounds.
     pub fn in_bounds(x: i32, y: i32, z: i32) -> bool {
         (0..CHUNK_SIZE).contains(&x) && (0..CHUNK_SIZE).contains(&y) && (0..CHUNK_SIZE).contains(&z)
     }
 
+    // Read a block at local coordinates (returns Air if out of bounds).
     pub fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
         if !Self::in_bounds(x, y, z) {
             return Block::Air;
@@ -112,6 +120,7 @@ impl Chunk {
         self.blocks[Self::index(x, y, z)]
     }
 
+    // Write a block at local coordinates (ignored if out of bounds).
     pub fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
         if !Self::in_bounds(x, y, z) {
             return;
@@ -121,6 +130,7 @@ impl Chunk {
     }
 }
 
+// Build mesh data for all visible faces in a chunk.
 pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -139,6 +149,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                 let fy = y as f32 * BLOCK_SIZE;
                 let fz = z as f32 * BLOCK_SIZE;
 
+                // Only add a face when the neighbor is air.
                 let x_pos = chunk.get_block(x + 1, y, z) == Block::Air;
                 let x_neg = chunk.get_block(x - 1, y, z) == Block::Air;
                 let y_pos = chunk.get_block(x, y + 1, z) == Block::Air;
@@ -243,10 +254,12 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
     }
 }
 
+// Helper to build a Mesh directly for a chunk.
 pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
     mesh_from_data(build_chunk_mesh_data(chunk))
 }
 
+// Convert mesh data into a Bevy Mesh.
 fn mesh_from_data(data: MeshData) -> Mesh {
     let mut mesh = Mesh::new(
         bevy::render::render_resource::PrimitiveTopology::TriangleList,
@@ -260,6 +273,7 @@ fn mesh_from_data(data: MeshData) -> Mesh {
     mesh
 }
 
+// Add a single quad face to mesh buffers.
 fn add_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
@@ -286,6 +300,7 @@ fn add_face(
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
+// Color blocks with small jitter for visual variation.
 fn face_color(block: Block, normal: [f32; 3], x: i32, y: i32, z: i32) -> [f32; 4] {
     let seed = (x * 7349 + y * 199 + z * 9151) as f32;
     let jitter = (seed.sin() * 0.03).clamp(-0.03, 0.03);
@@ -312,6 +327,7 @@ fn face_color(block: Block, normal: [f32; 3], x: i32, y: i32, z: i32) -> [f32; 4
     }
 }
 
+// Color for the preview block without jitter.
 fn face_color_preview(block: Block, normal: [f32; 3]) -> [f32; 4] {
     match block {
         Block::Grass => {
@@ -336,6 +352,8 @@ fn face_color_preview(block: Block, normal: [f32; 3]) -> [f32; 4] {
     }
 }
 
+
+// Build mesh data for a single block (used for preview).
 pub fn build_single_block_mesh_data(block: Block) -> MeshData {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -440,10 +458,12 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
     }
 }
 
+// Helper to build a Mesh directly for a single block.
 pub fn build_single_block_mesh(block: Block) -> Mesh {
     mesh_from_data(build_single_block_mesh_data(block))
 }
 
+// Update the preview mesh when selected block changes.
 pub fn update_preview_mesh(
     block: Block,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -456,6 +476,7 @@ pub fn update_preview_mesh(
     *mesh_handle = bevy::mesh::Mesh3d(new_mesh);
 }
 
+// Check if a world position contains a solid block.
 pub fn is_solid_world(pos: IVec3, world: &WorldState) -> bool {
     let chunk_coord = IVec3::new(
         pos.x.div_euclid(CHUNK_SIZE),
@@ -479,6 +500,7 @@ pub fn is_solid_world(pos: IVec3, world: &WorldState) -> bool {
     )
 }
 
+// Ensure a chunk exists at the given coordinate (spawn if missing).
 pub fn ensure_chunk(
     commands: &mut Commands,
     world: &mut WorldState,
@@ -488,7 +510,7 @@ pub fn ensure_chunk(
     if world.chunks.contains_key(&coord) {
         return;
     }
-    let chunk = if coord.y == 0 {
+    let chunk = if (0..VERTICAL_CHUNK_LAYERS).contains(&coord.y) {
         Chunk::new_terrain(coord)
     } else {
         Chunk::new_empty()
@@ -515,6 +537,7 @@ pub fn ensure_chunk(
     );
 }
 
+// Load/unload chunks around the player and build meshes asynchronously.
 pub fn chunk_loading_system(
     mut commands: Commands,
     mut world: ResMut<WorldState>,
@@ -526,6 +549,7 @@ pub fn chunk_loading_system(
         return;
     };
     let camera_pos = camera_transform.translation();
+    // Keep view distance centered around the camera.
     let center = IVec3::new(
         (camera_pos.x / (CHUNK_SIZE as f32 * BLOCK_SIZE)).floor() as i32,
         0,
@@ -533,10 +557,13 @@ pub fn chunk_loading_system(
     );
     world.center = center;
 
+    // Desired chunk set in a 3D window (x/z radius + vertical layers).
     let mut needed: HashSet<IVec3> = HashSet::new();
     for dz in -VIEW_DISTANCE..VIEW_DISTANCE {
         for dx in -VIEW_DISTANCE..VIEW_DISTANCE {
-            needed.insert(center + IVec3::new(dx, 0, dz));
+            for dy in 0..VERTICAL_CHUNK_LAYERS {
+                needed.insert(center + IVec3::new(dx, dy, dz));
+            }
         }
     }
     if needed != world.needed {
@@ -557,11 +584,12 @@ pub fn chunk_loading_system(
         world.pending.push_back(coord);
     }
 
+    // Unload chunks that fall outside the needed set.
     let to_remove: Vec<IVec3> = world
         .chunks
         .keys()
         .copied()
-        .filter(|coord| coord.y == 0 && !world.needed.contains(coord))
+        .filter(|coord| (0..VERTICAL_CHUNK_LAYERS).contains(&coord.y) && !world.needed.contains(coord))
         .collect();
     for coord in to_remove {
         if let Some(data) = world.chunks.remove(&coord) {
@@ -569,6 +597,7 @@ pub fn chunk_loading_system(
         }
     }
 
+    // Start a limited number of async chunk builds per frame.
     let mut started = 0;
     while started < LOADS_PER_FRAME
         && world.in_flight.len() < MAX_IN_FLIGHT
@@ -576,11 +605,11 @@ pub fn chunk_loading_system(
     {
         let coord = world.pending.pop_front().unwrap();
         let task = task_pool.spawn(async move {
-            let chunk = if coord.y == 0 {
-                Chunk::new_terrain(coord)
-            } else {
-                Chunk::new_empty()
-            };
+        let chunk = if (0..VERTICAL_CHUNK_LAYERS).contains(&coord.y) {
+            Chunk::new_terrain(coord)
+        } else {
+            Chunk::new_empty()
+        };
             let mesh_data = build_chunk_mesh_data(&chunk);
             ChunkBuildOutput {
                 coord,
@@ -592,6 +621,7 @@ pub fn chunk_loading_system(
         started += 1;
     }
 
+    // Collect finished async tasks.
     let mut finished: Vec<ChunkBuildOutput> = Vec::new();
     let mut finished_coords: Vec<IVec3> = Vec::new();
     for (coord, task) in world.in_flight.iter_mut() {
@@ -630,6 +660,7 @@ pub fn chunk_loading_system(
     }
 }
 
+// Handle block breaking/placing with cooldown and preview updates.
 pub fn block_interaction_system(
     mut commands: Commands,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -655,6 +686,7 @@ pub fn block_interaction_system(
     let Ok(camera_transform) = camera_query.single() else {
         return;
     };
+    // Rate limit repeated interactions.
     let now = time.elapsed_secs();
     let can_break = buttons.pressed(MouseButton::Left) && now - cooldown.last_break_time >= 0.2;
     let can_place = buttons.pressed(MouseButton::Right) && now - cooldown.last_place_time >= 0.2;
@@ -668,12 +700,14 @@ pub fn block_interaction_system(
         return;
     }
 
+    // Track the last empty block along the ray for placement.
     let mut last_empty: Option<IVec3> = None;
     let mut hit: Option<IVec3> = None;
     let step = 0.1;
     let max_distance = 6.0 * BLOCK_SIZE;
     let steps = (max_distance / step) as i32;
 
+    // Raymarch forward until we hit a solid block or reach max distance.
     for i in 0..steps {
         let position = origin + direction * (i as f32 * step);
         let block_world = IVec3::new(
@@ -710,6 +744,7 @@ pub fn block_interaction_system(
         }
     }
 
+    // Break the first solid block hit.
     if can_break {
         if let Some(target_world) = hit {
             let chunk_coord = IVec3::new(
@@ -736,6 +771,7 @@ pub fn block_interaction_system(
             return;
         }
     }
+    // Place on the last empty position before a hit.
     if can_place && let (Some(_), Some(target_world)) = (hit, last_empty) {
         if let Ok((player_transform, player)) = player_query.single()
             && player_intersects_block(player_transform.translation, player.half_size, target_world)
@@ -766,6 +802,7 @@ pub fn block_interaction_system(
     }
 }
 
+// Prevent placing blocks overlapping the player.
 fn player_intersects_block(player_pos: Vec3, player_half_size: Vec3, block_world: IVec3) -> bool {
     let block_min = Vec3::new(
         block_world.x as f32 * BLOCK_SIZE,

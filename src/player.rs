@@ -39,6 +39,7 @@ pub struct PlayerController {
 #[derive(Component, Default)]
 pub struct Velocity(pub Vec3);
 
+// Update camera rotation based on mouse input and rotate the player body yaw.
 pub fn camera_look_system(
     mouse_motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     mut camera_query: Query<(&mut Transform, &mut FlyCamera), Without<PlayerBody>>,
@@ -57,6 +58,7 @@ pub fn camera_look_system(
     }
 }
 
+// Keep the camera positioned at the player's eye height.
 pub fn camera_follow_system(
     mut camera_query: Query<(&mut Transform, &FlyCamera), Without<PlayerBody>>,
     body_query: Query<(&Transform, &Player), (With<PlayerBody>, Without<FlyCamera>)>,
@@ -69,6 +71,7 @@ pub fn camera_follow_system(
     }
 }
 
+// Handle player movement input and apply ground/air movement or fly movement.
 pub fn camera_move_system(
     input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&Transform, &PlayerController, &mut Velocity, &mut Player), With<PlayerBody>>,
@@ -88,6 +91,7 @@ pub fn camera_move_system(
             direction += transform.right().as_vec3();
         }
 
+        // Flying mode: full 3D movement, no gravity or jump boost.
         if player.flying {
             if input.pressed(KeyCode::Space) {
                 direction.y += 1.0;
@@ -97,7 +101,7 @@ pub fn camera_move_system(
             }
             let mut wish = direction;
             if wish != Vec3::ZERO {
-                let mut speed = controller.speed;
+                let mut speed = controller.speed * 5.0;
                 if input.pressed(KeyCode::ShiftLeft) {
                     speed *= 1.5;
                 }
@@ -115,10 +119,12 @@ pub fn camera_move_system(
                 }
                 wish = wish.normalize() * speed;
             }
+            // Ground movement snaps to desired horizontal speed.
             if player.on_ground {
                 velocity.0.x = wish.x;
                 velocity.0.z = wish.z;
             } else if wish != Vec3::ZERO {
+                // Air control nudges velocity toward desired direction.
                 let air_control = 0.08;
                 velocity.0.x += (wish.x - velocity.0.x) * air_control;
                 velocity.0.z += (wish.z - velocity.0.z) * air_control;
@@ -133,6 +139,7 @@ pub fn camera_move_system(
     }
 }
 
+// Toggle flying mode with F2.
 pub fn toggle_fly_system(
     input: Res<ButtonInput<KeyCode>>,
     mut query: Query<&mut Player, With<PlayerBody>>,
@@ -149,6 +156,7 @@ pub fn toggle_fly_system(
     }
 }
 
+// Start/stop crouch intent and update target collider/eye height.
 pub fn crouch_system(
     input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Transform, &mut Player), With<PlayerBody>>,
@@ -176,6 +184,7 @@ pub fn crouch_system(
     }
 }
 
+// Smoothly transition collider height and eye height for crouching.
 pub fn crouch_transition_system(
     time: Res<Time>,
     mut query: Query<(&mut Transform, &mut Player), With<PlayerBody>>,
@@ -190,6 +199,7 @@ pub fn crouch_transition_system(
         if (new_y - old_half.y).abs() > f32::EPSILON {
             let candidate_pos = transform.translation + Vec3::Y * (new_y - old_half.y);
             let candidate_half = Vec3::new(old_half.x, new_y, old_half.z);
+            // Allow shrinking always, but only allow growth if space is clear.
             if new_y <= old_half.y || !intersects_solid(candidate_pos, candidate_half, &world) {
                 transform.translation = candidate_pos;
                 player.half_size = candidate_half;
@@ -200,6 +210,7 @@ pub fn crouch_transition_system(
     }
 }
 
+// Apply gravity, jump boost, and resolve movement with collision.
 pub fn physics_system(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
@@ -208,6 +219,7 @@ pub fn physics_system(
 ) {
     let dt = time.delta_secs();
     for (mut transform, mut velocity, mut player) in &mut query {
+        // Only apply gravity/jump boost when not flying.
         if !player.flying {
             if !input.pressed(KeyCode::Space) {
                 player.jump_boost_time = 0.0;
@@ -224,6 +236,7 @@ pub fn physics_system(
         let mut vel = velocity.0;
         player.on_ground = false;
 
+        // Resolve collisions per axis to keep movement stable.
         move_axis(Vec3::X, &mut pos, &mut vel, player.half_size, &world, dt);
         move_axis(Vec3::Z, &mut pos, &mut vel, player.half_size, &world, dt);
         move_axis(Vec3::Y, &mut pos, &mut vel, player.half_size, &world, dt);
@@ -237,6 +250,7 @@ pub fn physics_system(
     }
 }
 
+// Move along a single axis and stop on collision.
 fn move_axis(
     axis: Vec3,
     pos: &mut Vec3,
@@ -278,6 +292,7 @@ fn move_axis(
     *pos = candidate;
 }
 
+// Check whether a player-sized AABB intersects any solid block.
 fn intersects_solid(position: Vec3, half_size: Vec3, world: &WorldState) -> bool {
     let min = position - half_size;
     let max = position + half_size;

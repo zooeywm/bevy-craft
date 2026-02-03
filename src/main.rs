@@ -15,20 +15,36 @@ use voxel::{
     block_interaction_system, build_chunk_mesh, build_single_block_mesh, chunk_loading_system,
 };
 
+// Chunk width/height/depth in blocks.
 const CHUNK_SIZE: i32 = 16;
+// Size of one block in world units.
 const BLOCK_SIZE: f32 = 0.5;
-const VIEW_DISTANCE: i32 = 8;
-const LOADS_PER_FRAME: usize = 2;
-const MAX_IN_FLIGHT: usize = 8;
+// Horizontal chunk radius around the player to keep loaded.
+const VIEW_DISTANCE: i32 = 10;
+// Number of vertical chunk layers to generate (y=0..layers-1).
+const VERTICAL_CHUNK_LAYERS: i32 = 6;
+// Max chunk builds started per frame.
+const LOADS_PER_FRAME: usize = 16;
+// Max async chunk build tasks in flight.
+const MAX_IN_FLIGHT: usize = 16;
+// Gravity acceleration for the player.
 const GRAVITY: f32 = 20.0;
+// Duration of jump boost when holding jump.
 const JUMP_BOOST_DURATION: f32 = 0.12;
+// Upward acceleration during jump boost.
 const JUMP_BOOST_ACCEL: f32 = 18.0;
+// Smoothing speed for crouch transitions.
 const CROUCH_TRANSITION_SPEED: f32 = 12.0;
+// Half-size of the standing player collider.
 const STAND_HALF_SIZE: Vec3 = Vec3::new(0.3 * BLOCK_SIZE, 0.95 * BLOCK_SIZE, 0.3 * BLOCK_SIZE);
+// Half-size of the crouching player collider.
 const CROUCH_HALF_SIZE: Vec3 = Vec3::new(0.3 * BLOCK_SIZE, 0.45 * BLOCK_SIZE, 0.3 * BLOCK_SIZE);
+// Eye height when standing (in world units).
 const STAND_EYE_HEIGHT: f32 = 1.8 * BLOCK_SIZE;
+// Eye height when crouching (in world units).
 const CROUCH_EYE_HEIGHT: f32 = 0.8 * BLOCK_SIZE;
 
+// App entry point and system registration.
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -51,30 +67,37 @@ fn main() {
         .run();
 }
 
+// Build the initial world, lighting, player, camera, and UI helpers.
 fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Sky-like background color.
     commands.insert_resource(ClearColor(Color::srgb(0.6, 0.75, 0.95)));
+    // Global ambient light to avoid fully black backfaces.
     commands.insert_resource(bevy::light::GlobalAmbientLight {
         color: Color::srgb(0.8, 0.8, 0.8),
         brightness: 80.0,
         affects_lightmapped_meshes: true,
     });
+    // Shared material for world blocks.
     let material = materials.add(bevy::pbr::StandardMaterial {
         base_color: Color::srgb(0.8, 0.4, 0.2),
-        perceptual_roughness: 1.0,
+        perceptual_roughness: 0.6,
         metallic: 0.0,
-        reflectance: 0.0,
+        reflectance: 0.2,
         ..default()
     });
+    // Preview block uses the same material as the world.
     let preview_material_handle = material.clone();
+    // Unlit material for the crosshair.
     let crosshair_material = materials.add(bevy::pbr::StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
         ..default()
     });
+    // Initialize world state and dynamic chunk tracking.
     let mut world_state = WorldState {
         chunks: std::collections::HashMap::new(),
         material,
@@ -83,14 +106,17 @@ fn setup_scene(
         pending: std::collections::VecDeque::new(),
         in_flight: std::collections::HashMap::new(),
     };
+    // Default selected block for placement.
     commands.insert_resource(SelectedBlock {
         current: Block::Grass,
     });
+    // Cooldown timers for repeat place/break.
     commands.insert_resource(InteractionCooldown {
         last_break_time: -1.0,
         last_place_time: -1.0,
     });
 
+    // Spawn the initial terrain chunk at the origin.
     let spawn_coord = IVec3::new(0, 0, 0);
     let spawn_chunk = Chunk::new_terrain(spawn_coord);
     let spawn_mesh = meshes.add(build_chunk_mesh(&spawn_chunk));
@@ -116,10 +142,10 @@ fn setup_scene(
     world_state.center = spawn_coord;
     commands.insert_resource(world_state);
 
-    // Light
+    // Key lights.
     commands.spawn((
         bevy::light::DirectionalLight {
-            illuminance: 80_000.0,
+            illuminance: 95_000.0,
             color: Color::srgb(1.0, 1.0, 1.0),
             ..default()
         },
@@ -134,7 +160,7 @@ fn setup_scene(
         Transform::from_xyz(-6.0, 4.0, -4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Player body
+    // Player body spawn positioned above terrain.
     let spawn_x_block = 4;
     let spawn_z_block = 4;
     let ground_height = height_at(spawn_x_block, spawn_z_block);
@@ -161,7 +187,7 @@ fn setup_scene(
         ))
         .id();
 
-    // Camera
+    // First-person camera.
     commands.spawn((
         bevy::camera::Camera3d::default(),
         Transform::from_xyz(
@@ -178,7 +204,7 @@ fn setup_scene(
         },
     ));
 
-    // Preview block
+    // Preview block shown near the camera.
     let preview_mesh = meshes.add(build_single_block_mesh(Block::Grass));
     commands.spawn((
         bevy::mesh::Mesh3d(preview_mesh),
@@ -187,7 +213,7 @@ fn setup_scene(
         PreviewBlock,
     ));
 
-    // Crosshair (3D)
+    // 3D crosshair (line list).
     let mut crosshair = Mesh::new(
         bevy::render::render_resource::PrimitiveTopology::LineList,
         bevy::asset::RenderAssetUsages::default(),
@@ -211,6 +237,7 @@ fn setup_scene(
     ));
 }
 
+// Lock and hide cursor for mouse look.
 fn setup_cursor(
     mut windows: Query<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
 ) {
@@ -221,6 +248,7 @@ fn setup_cursor(
     cursor_options.visible = false;
 }
 
+// Keep the preview block aligned to the camera.
 fn preview_follow_system(
     camera_query: Query<&Transform, (With<FlyCamera>, Without<PreviewBlock>)>,
     mut preview_query: Query<&mut Transform, (With<PreviewBlock>, Without<FlyCamera>)>,
@@ -240,6 +268,7 @@ fn preview_follow_system(
     preview_transform.rotation = camera_transform.rotation;
 }
 
+// Keep the crosshair aligned to the camera.
 fn crosshair_follow_system(
     camera_query: Query<&Transform, (With<FlyCamera>, Without<Crosshair>)>,
     mut crosshair_query: Query<&mut Transform, (With<Crosshair>, Without<FlyCamera>)>,
