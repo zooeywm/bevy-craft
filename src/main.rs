@@ -1,4 +1,8 @@
 use bevy::prelude::*;
+use bevy::asset::RenderAssetUsages;
+use bevy::image::ImageSampler;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use image::GenericImage;
 
 mod player;
 mod terrain;
@@ -72,21 +76,25 @@ fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     // Sky-like background color.
     commands.insert_resource(ClearColor(Color::srgb(0.6, 0.75, 0.95)));
     // Global ambient light to avoid fully black backfaces.
     commands.insert_resource(bevy::light::GlobalAmbientLight {
         color: Color::srgb(0.8, 0.8, 0.8),
-        brightness: 80.0,
+        brightness: 140.0,
         affects_lightmapped_meshes: true,
     });
     // Shared material for world blocks.
+    let atlas = build_texture_atlas();
+    let atlas_handle = images.add(atlas);
     let material = materials.add(bevy::pbr::StandardMaterial {
-        base_color: Color::srgb(0.8, 0.4, 0.2),
-        perceptual_roughness: 0.6,
+        base_color: Color::WHITE,
+        base_color_texture: Some(atlas_handle.clone()),
+        perceptual_roughness: 0.85,
         metallic: 0.0,
-        reflectance: 0.2,
+        reflectance: 0.04,
         ..default()
     });
     // Preview block uses the same material as the world.
@@ -142,22 +150,24 @@ fn setup_scene(
     world_state.center = spawn_coord;
     commands.insert_resource(world_state);
 
-    // Key lights.
+    // Sun-like directional light.
     commands.spawn((
         bevy::light::DirectionalLight {
-            illuminance: 95_000.0,
-            color: Color::srgb(1.0, 1.0, 1.0),
+            illuminance: 90_000.0,
+            color: Color::srgb(1.0, 0.98, 0.95),
+            shadows_enabled: false,
             ..default()
         },
-        Transform::from_xyz(5.0, 8.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(6.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
         bevy::light::DirectionalLight {
-            illuminance: 12_000.0,
+            illuminance: 18_000.0,
             color: Color::srgb(0.9, 0.95, 1.0),
+            shadows_enabled: false,
             ..default()
         },
-        Transform::from_xyz(-6.0, 4.0, -4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-6.0, -10.0, -6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     // Player body spawn positioned above terrain.
@@ -282,4 +292,44 @@ fn crosshair_follow_system(
     let forward: Vec3 = camera_transform.forward().as_vec3();
     crosshair_transform.translation = camera_transform.translation + forward * (BLOCK_SIZE * 1.5);
     crosshair_transform.rotation = camera_transform.rotation;
+}
+
+// Build a 1x3 texture atlas for grass side/top and dirt (pixel-art style).
+fn build_texture_atlas() -> Image {
+    let grass_side = load_rgba("assets/textures/grass.png");
+    let grass_top = load_rgba("assets/textures/grasstop.png");
+    let dirt = load_rgba("assets/textures/dirt.png");
+    let (tile_w, tile_h) = grass_side.dimensions();
+
+    let mut atlas = image::RgbaImage::new(tile_w * 3, tile_h);
+    atlas.copy_from(&grass_side, 0, 0).expect("copy grass");
+    atlas
+        .copy_from(&grass_top, tile_w, 0)
+        .expect("copy grass top");
+    atlas
+        .copy_from(&dirt, tile_w * 2, 0)
+        .expect("copy dirt");
+
+    let size = Extent3d {
+        width: atlas.width(),
+        height: atlas.height(),
+        depth_or_array_layers: 1,
+    };
+    let mut image = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    image.data = Some(atlas.into_raw());
+    image.sampler = ImageSampler::nearest();
+    image
+}
+
+// Load a PNG file into RGBA8 image data.
+fn load_rgba(path: &str) -> image::RgbaImage {
+    let bytes = std::fs::read(path).expect("texture file not found");
+    let img = image::load_from_memory(&bytes).expect("decode texture");
+    img.to_rgba8()
 }

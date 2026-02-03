@@ -68,6 +68,12 @@ pub struct ChunkBuildOutput {
     mesh_data: MeshData,
 }
 
+// Atlas layout: 3 tiles in a single row (grass side, grass top, dirt).
+const ATLAS_TILES_X: f32 = 3.0;
+const TILE_GRASS_SIDE: u32 = 0;
+const TILE_GRASS_TOP: u32 = 1;
+const TILE_DIRT: u32 = 2;
+
 impl Chunk {
     // Generate terrain blocks for a chunk based on heightmap.
     pub fn new_terrain(coord: IVec3) -> Self {
@@ -167,6 +173,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx + BLOCK_SIZE, fy, fz + BLOCK_SIZE],
+                    face_uvs(tile_for_face(block, [1.0, 0.0, 0.0])),
                     [1.0, 0.0, 0.0],
                     face_color(block, [1.0, 0.0, 0.0], x, y, z),
                     x_pos,
@@ -181,6 +188,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx, fy + BLOCK_SIZE, fz],
                     [fx, fy, fz],
+                    face_uvs(tile_for_face(block, [-1.0, 0.0, 0.0])),
                     [-1.0, 0.0, 0.0],
                     face_color(block, [-1.0, 0.0, 0.0], x, y, z),
                     x_neg,
@@ -195,6 +203,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
+                    face_uvs(tile_for_face(block, [0.0, 1.0, 0.0])),
                     [0.0, 1.0, 0.0],
                     face_color(block, [0.0, 1.0, 0.0], x, y, z),
                     y_pos,
@@ -209,6 +218,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx, fy, fz],
                     [fx + BLOCK_SIZE, fy, fz],
                     [fx + BLOCK_SIZE, fy, fz + BLOCK_SIZE],
+                    face_uvs(tile_for_face(block, [0.0, -1.0, 0.0])),
                     [0.0, -1.0, 0.0],
                     face_color(block, [0.0, -1.0, 0.0], x, y, z),
                     y_neg,
@@ -223,6 +233,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
                     [fx, fy, fz + BLOCK_SIZE],
+                    face_uvs(tile_for_face(block, [0.0, 0.0, 1.0])),
                     [0.0, 0.0, 1.0],
                     face_color(block, [0.0, 0.0, 1.0], x, y, z),
                     z_pos,
@@ -237,6 +248,7 @@ pub fn build_chunk_mesh_data(chunk: &Chunk) -> MeshData {
                     [fx, fy + BLOCK_SIZE, fz],
                     [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
                     [fx + BLOCK_SIZE, fy, fz],
+                    face_uvs(tile_for_face(block, [0.0, 0.0, -1.0])),
                     [0.0, 0.0, -1.0],
                     face_color(block, [0.0, 0.0, -1.0], x, y, z),
                     z_neg,
@@ -284,6 +296,7 @@ fn add_face(
     v1: [f32; 3],
     v2: [f32; 3],
     v3: [f32; 3],
+    uv: [[f32; 2]; 4],
     normal: [f32; 3],
     color: [f32; 4],
     visible: bool,
@@ -295,32 +308,30 @@ fn add_face(
     let start = positions.len() as u32;
     positions.extend_from_slice(&[v0, v1, v2, v3]);
     normals.extend_from_slice(&[normal, normal, normal, normal]);
-    uvs.extend_from_slice(&[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]);
+    uvs.extend_from_slice(&uv);
     colors.extend_from_slice(&[color, color, color, color]);
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
 // Color blocks with small jitter for visual variation.
 fn face_color(block: Block, normal: [f32; 3], x: i32, y: i32, z: i32) -> [f32; 4] {
-    let seed = (x * 7349 + y * 199 + z * 9151) as f32;
-    let jitter = (seed.sin() * 0.03).clamp(-0.03, 0.03);
     match block {
         Block::Grass => {
             if normal[1] > 0.5 {
-                [0.14 + jitter, 0.50 + jitter, 0.14 + jitter, 1.0]
+                [0.14, 0.50, 0.14, 1.0]
             } else if normal[1] < -0.5 {
-                [0.25 + jitter, 0.18 + jitter, 0.12 + jitter, 1.0]
+                [0.25, 0.18, 0.12, 1.0]
             } else {
-                [0.45 + jitter, 0.30 + jitter, 0.18 + jitter, 1.0]
+                [0.45, 0.30, 0.18, 1.0]
             }
         }
         Block::Dirt => {
             if normal[1] > 0.5 {
-                [0.45 + jitter, 0.32 + jitter, 0.20 + jitter, 1.0]
+                [0.45, 0.32, 0.20, 1.0]
             } else if normal[1] < -0.5 {
-                [0.25 + jitter, 0.18 + jitter, 0.12 + jitter, 1.0]
+                [0.25, 0.18, 0.12, 1.0]
             } else {
-                [0.40 + jitter, 0.28 + jitter, 0.17 + jitter, 1.0]
+                [0.40, 0.28, 0.17, 1.0]
             }
         }
         Block::Air => [0.0, 0.0, 0.0, 0.0],
@@ -374,6 +385,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx + BLOCK_SIZE, fy, fz + BLOCK_SIZE],
+        face_uvs(tile_for_face(block, [1.0, 0.0, 0.0])),
         [1.0, 0.0, 0.0],
         face_color_preview(block, [1.0, 0.0, 0.0]),
         true,
@@ -388,6 +400,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx, fy + BLOCK_SIZE, fz],
         [fx, fy, fz],
+        face_uvs(tile_for_face(block, [-1.0, 0.0, 0.0])),
         [-1.0, 0.0, 0.0],
         face_color_preview(block, [-1.0, 0.0, 0.0]),
         true,
@@ -402,6 +415,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
+        face_uvs(tile_for_face(block, [0.0, 1.0, 0.0])),
         [0.0, 1.0, 0.0],
         face_color_preview(block, [0.0, 1.0, 0.0]),
         true,
@@ -416,6 +430,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx, fy, fz],
         [fx + BLOCK_SIZE, fy, fz],
         [fx + BLOCK_SIZE, fy, fz + BLOCK_SIZE],
+        face_uvs(tile_for_face(block, [0.0, -1.0, 0.0])),
         [0.0, -1.0, 0.0],
         face_color_preview(block, [0.0, -1.0, 0.0]),
         true,
@@ -430,6 +445,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx, fy + BLOCK_SIZE, fz + BLOCK_SIZE],
         [fx, fy, fz + BLOCK_SIZE],
+        face_uvs(tile_for_face(block, [0.0, 0.0, 1.0])),
         [0.0, 0.0, 1.0],
         face_color_preview(block, [0.0, 0.0, 1.0]),
         true,
@@ -444,6 +460,7 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         [fx, fy + BLOCK_SIZE, fz],
         [fx + BLOCK_SIZE, fy + BLOCK_SIZE, fz],
         [fx + BLOCK_SIZE, fy, fz],
+        face_uvs(tile_for_face(block, [0.0, 0.0, -1.0])),
         [0.0, 0.0, -1.0],
         face_color_preview(block, [0.0, 0.0, -1.0]),
         true,
@@ -456,6 +473,35 @@ pub fn build_single_block_mesh_data(block: Block) -> MeshData {
         colors,
         indices,
     }
+}
+
+// Pick atlas tile index for a block face.
+fn tile_for_face(block: Block, normal: [f32; 3]) -> u32 {
+    match block {
+        Block::Grass => {
+            if normal[1] > 0.5 {
+                TILE_GRASS_TOP
+            } else if normal[1] < -0.5 {
+                TILE_DIRT
+            } else {
+                TILE_GRASS_SIDE
+            }
+        }
+        Block::Dirt => TILE_DIRT,
+        Block::Air => TILE_DIRT,
+    }
+}
+
+// UVs for a tile in a 1x3 atlas.
+fn face_uvs(tile: u32) -> [[f32; 2]; 4] {
+    let u0 = tile as f32 / ATLAS_TILES_X;
+    let u1 = (tile as f32 + 1.0) / ATLAS_TILES_X;
+    [
+        [u0, 0.0],
+        [u0, 1.0],
+        [u1, 1.0],
+        [u1, 0.0],
+    ]
 }
 
 // Helper to build a Mesh directly for a single block.
