@@ -7,7 +7,7 @@ mod voxel;
 use player::{
     FlyCamera, Player, PlayerBody, PlayerController, Velocity, camera_follow_system,
     camera_look_system, camera_move_system, crouch_system, crouch_transition_system,
-    physics_system,
+    physics_system, toggle_fly_system,
 };
 use terrain::height_at;
 use voxel::{
@@ -39,6 +39,7 @@ fn main() {
                 chunk_loading_system,
                 camera_look_system,
                 camera_move_system,
+                toggle_fly_system,
                 crouch_system,
                 crouch_transition_system,
                 physics_system,
@@ -154,6 +155,7 @@ fn setup_scene(
                 target_half_size: STAND_HALF_SIZE,
                 target_eye_height: STAND_EYE_HEIGHT,
                 crouching: false,
+                flying: false,
             },
             PlayerController { speed: 4.2 },
         ))

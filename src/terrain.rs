@@ -1,12 +1,21 @@
 use crate::CHUNK_SIZE;
 
+const BASE_HEIGHT: f32 = 4.0;
+const PLAIN_AMPLITUDE: f32 = 0.9;
+const MOUNTAIN_AMPLITUDE: f32 = 1000.0;
+const MOUNTAIN_WEIGHT: f32 = 0.8;
+const TERRAIN_SCALE: f32 = 0.06;
+const MOUNTAIN_SCALE: f32 = 0.18;
+
 pub fn height_at(x: i32, z: i32) -> i32 {
-    let fx = x as f32 * 0.08;
-    let fz = z as f32 * 0.08;
+    let fx = x as f32 * TERRAIN_SCALE;
+    let fz = z as f32 * TERRAIN_SCALE;
+
     let noise = fbm_2d(fx, fz);
-    let base = 4.0;
-    let amp = 6.0;
-    let height = (base + noise * amp).round() as i32;
+    let mask = (fbm_2d(fx * MOUNTAIN_SCALE, fz * MOUNTAIN_SCALE) + 1.0) * 0.5;
+    let mountain_mask = mask.powf(2.0);
+    let amp = lerp(PLAIN_AMPLITUDE, MOUNTAIN_AMPLITUDE, mountain_mask * MOUNTAIN_WEIGHT);
+    let height = (BASE_HEIGHT + noise * amp).round() as i32;
     height.clamp(1, CHUNK_SIZE - 1)
 }
 

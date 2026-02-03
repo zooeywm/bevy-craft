@@ -28,6 +28,7 @@ pub struct Player {
     pub target_half_size: Vec3,
     pub target_eye_height: f32,
     pub crouching: bool,
+    pub flying: bool,
 }
 
 #[derive(Component)]
@@ -87,28 +88,63 @@ pub fn camera_move_system(
             direction += transform.right().as_vec3();
         }
 
-        let mut wish = direction;
-        wish.y = 0.0;
-        if wish != Vec3::ZERO {
-            let mut speed = controller.speed;
-            if input.pressed(KeyCode::ShiftLeft) {
-                speed *= 1.5;
+        if player.flying {
+            if input.pressed(KeyCode::Space) {
+                direction.y += 1.0;
             }
-            wish = wish.normalize() * speed;
-        }
-        if player.on_ground {
-            velocity.0.x = wish.x;
-            velocity.0.z = wish.z;
-        } else if wish != Vec3::ZERO {
-            let air_control = 0.08;
-            velocity.0.x += (wish.x - velocity.0.x) * air_control;
-            velocity.0.z += (wish.z - velocity.0.z) * air_control;
-        }
+            if input.pressed(KeyCode::ControlLeft) {
+                direction.y -= 1.0;
+            }
+            let mut wish = direction;
+            if wish != Vec3::ZERO {
+                let mut speed = controller.speed;
+                if input.pressed(KeyCode::ShiftLeft) {
+                    speed *= 1.5;
+                }
+                wish = wish.normalize() * speed;
+            }
+            velocity.0 = wish;
+            player.jump_boost_time = 0.0;
+        } else {
+            let mut wish = direction;
+            wish.y = 0.0;
+            if wish != Vec3::ZERO {
+                let mut speed = controller.speed;
+                if input.pressed(KeyCode::ShiftLeft) {
+                    speed *= 1.5;
+                }
+                wish = wish.normalize() * speed;
+            }
+            if player.on_ground {
+                velocity.0.x = wish.x;
+                velocity.0.z = wish.z;
+            } else if wish != Vec3::ZERO {
+                let air_control = 0.08;
+                velocity.0.x += (wish.x - velocity.0.x) * air_control;
+                velocity.0.z += (wish.z - velocity.0.z) * air_control;
+            }
 
-        if input.just_pressed(KeyCode::Space) && player.on_ground {
-            velocity.0.y = player.jump_speed;
-            player.jump_boost_time = JUMP_BOOST_DURATION;
+            if input.just_pressed(KeyCode::Space) && player.on_ground {
+                velocity.0.y = player.jump_speed;
+                player.jump_boost_time = JUMP_BOOST_DURATION;
+                player.on_ground = false;
+            }
+        }
+    }
+}
+
+pub fn toggle_fly_system(
+    input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut Player, With<PlayerBody>>,
+) {
+    if !input.just_pressed(KeyCode::F2) {
+        return;
+    }
+    for mut player in &mut query {
+        player.flying = !player.flying;
+        if player.flying {
             player.on_ground = false;
+            player.jump_boost_time = 0.0;
         }
     }
 }
@@ -119,6 +155,9 @@ pub fn crouch_system(
     world: Res<WorldState>,
 ) {
     for (transform, mut player) in &mut query {
+        if player.flying {
+            continue;
+        }
         if input.pressed(KeyCode::ControlLeft) {
             if !player.crouching {
                 player.crouching = true;
@@ -169,15 +208,17 @@ pub fn physics_system(
 ) {
     let dt = time.delta_secs();
     for (mut transform, mut velocity, mut player) in &mut query {
-        if !input.pressed(KeyCode::Space) {
-            player.jump_boost_time = 0.0;
-        }
-        if player.jump_boost_time > 0.0 {
-            velocity.0.y += JUMP_BOOST_ACCEL * dt;
-            player.jump_boost_time -= dt;
-        }
+        if !player.flying {
+            if !input.pressed(KeyCode::Space) {
+                player.jump_boost_time = 0.0;
+            }
+            if player.jump_boost_time > 0.0 {
+                velocity.0.y += JUMP_BOOST_ACCEL * dt;
+                player.jump_boost_time -= dt;
+            }
 
-        velocity.0.y -= GRAVITY * dt;
+            velocity.0.y -= GRAVITY * dt;
+        }
 
         let mut pos = transform.translation;
         let mut vel = velocity.0;
@@ -187,7 +228,7 @@ pub fn physics_system(
         move_axis(Vec3::Z, &mut pos, &mut vel, player.half_size, &world, dt);
         move_axis(Vec3::Y, &mut pos, &mut vel, player.half_size, &world, dt);
 
-        if vel.y == 0.0 && velocity.0.y < 0.0 {
+        if !player.flying && vel.y == 0.0 && velocity.0.y < 0.0 {
             player.on_ground = true;
         }
 
