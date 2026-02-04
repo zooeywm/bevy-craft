@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::player::{Player, PlayerBody};
 use crate::terrain::height_at;
 use crate::{
-    BLOCK_SIZE, CHUNK_SIZE, LOADS_PER_FRAME, MAX_IN_FLIGHT, VIEW_DISTANCE,
+    BLOCK_SIZE, CHUNK_SIZE, GRAVITY, LOADS_PER_FRAME, MAX_IN_FLIGHT, VIEW_DISTANCE,
     VERTICAL_CHUNK_LAYERS,
 };
 
@@ -50,6 +50,15 @@ pub struct InteractionCooldown {
 
 #[derive(Component)]
 pub struct PreviewBlock;
+
+#[derive(Resource)]
+pub struct BlockFallScanTimer(pub Timer);
+
+#[derive(Component)]
+pub struct FallingBlock {
+    block: Block,
+    velocity_y: f32,
+}
 
 
 pub struct MeshData {
@@ -508,6 +517,31 @@ pub fn build_single_block_mesh(block: Block) -> Mesh {
     mesh_from_data(build_single_block_mesh_data(block))
 }
 
+fn world_to_chunk_local(world_pos: IVec3) -> (IVec3, IVec3) {
+    let chunk = IVec3::new(
+        world_pos.x.div_euclid(CHUNK_SIZE),
+        world_pos.y.div_euclid(CHUNK_SIZE),
+        world_pos.z.div_euclid(CHUNK_SIZE),
+    );
+    let local = IVec3::new(
+        world_pos.x.rem_euclid(CHUNK_SIZE),
+        world_pos.y.rem_euclid(CHUNK_SIZE),
+        world_pos.z.rem_euclid(CHUNK_SIZE),
+    );
+    (chunk, local)
+}
+
+fn get_block_world(world: &WorldState, world_pos: IVec3) -> Option<Block> {
+    let (chunk_coord, local) = world_to_chunk_local(world_pos);
+    let Some(chunk) = world.chunks.get(&chunk_coord) else {
+        return None;
+    };
+    if !Chunk::in_bounds(local.x, local.y, local.z) {
+        return None;
+    }
+    Some(chunk.chunk.get_block(local.x, local.y, local.z))
+}
+
 // Update the preview mesh when selected block changes.
 pub fn update_preview_mesh(
     block: Block,
@@ -519,6 +553,136 @@ pub fn update_preview_mesh(
     };
     let new_mesh = meshes.add(mesh_from_data(build_single_block_mesh_data(block)));
     *mesh_handle = bevy::mesh::Mesh3d(new_mesh);
+}
+
+pub fn spawn_falling_blocks_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut timer: ResMut<BlockFallScanTimer>,
+    mut world: ResMut<WorldState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    if !timer.0.tick(time.delta()).just_finished() {
+        return;
+    }
+
+    let mut to_spawn: Vec<(IVec3, Block)> = Vec::new();
+    for (chunk_coord, chunk_data) in world.chunks.iter() {
+        let base = *chunk_coord * CHUNK_SIZE;
+        for z in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    let block = chunk_data.chunk.get_block(x, y, z);
+                    if block == Block::Air {
+                        continue;
+                    }
+                    let world_pos = base + IVec3::new(x, y, z);
+                    let below = world_pos + IVec3::new(0, -1, 0);
+                    if below.y < 0 {
+                        continue;
+                    }
+                    if let Some(below_block) = get_block_world(&world, below)
+                        && below_block == Block::Air
+                    {
+                        to_spawn.push((world_pos, block));
+                    }
+                }
+            }
+        }
+    }
+
+    if to_spawn.is_empty() {
+        return;
+    }
+
+    let mut touched: HashSet<IVec3> = HashSet::new();
+    for (world_pos, block) in to_spawn {
+        let (chunk_coord, local) = world_to_chunk_local(world_pos);
+        let Some(chunk_data) = world.chunks.get_mut(&chunk_coord) else {
+            continue;
+        };
+        chunk_data
+            .chunk
+            .set_block(local.x, local.y, local.z, Block::Air);
+        touched.insert(chunk_coord);
+
+        let mesh = meshes.add(build_single_block_mesh(block));
+        let translation = Vec3::new(
+            world_pos.x as f32 * BLOCK_SIZE,
+            world_pos.y as f32 * BLOCK_SIZE,
+            world_pos.z as f32 * BLOCK_SIZE,
+        );
+        commands.spawn((
+            bevy::mesh::Mesh3d(mesh),
+            bevy::pbr::MeshMaterial3d(world.material.clone()),
+            Transform::from_translation(translation),
+            FallingBlock {
+                block,
+                velocity_y: 0.0,
+            },
+            Name::new("FallingBlock"),
+        ));
+    }
+
+    for chunk_coord in touched {
+        let Some(chunk_data) = world.chunks.get_mut(&chunk_coord) else {
+            continue;
+        };
+        if let Some(mesh) = meshes.get_mut(&chunk_data.mesh) {
+            *mesh = mesh_from_data(build_chunk_mesh_data(&chunk_data.chunk));
+        }
+    }
+}
+
+pub fn update_falling_blocks_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut world: ResMut<WorldState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut query: Query<(Entity, &mut Transform, &mut FallingBlock)>,
+) {
+    let dt = time.delta_secs();
+    let half = BLOCK_SIZE * 0.5;
+    let mut touched: HashSet<IVec3> = HashSet::new();
+
+    for (entity, mut transform, mut falling) in &mut query {
+        falling.velocity_y -= GRAVITY * dt;
+        let mut next = transform.translation;
+        next.y += falling.velocity_y * dt;
+
+        let center_x = next.x + half;
+        let center_z = next.z + half;
+        let world_x = (center_x / BLOCK_SIZE).floor() as i32;
+        let world_z = (center_z / BLOCK_SIZE).floor() as i32;
+        let bottom_y = next.y;
+        let below_y = (bottom_y / BLOCK_SIZE).floor() as i32 - 1;
+        let below = IVec3::new(world_x, below_y, world_z);
+
+        if below_y >= 0 && get_block_world(&world, below) != Some(Block::Air) {
+            let landing_block = IVec3::new(world_x, below_y + 1, world_z);
+            let (chunk_coord, local) = world_to_chunk_local(landing_block);
+            ensure_chunk(&mut commands, &mut world, &mut meshes, chunk_coord);
+            if let Some(chunk_data) = world.chunks.get_mut(&chunk_coord) {
+                chunk_data
+                    .chunk
+                    .set_block(local.x, local.y, local.z, falling.block);
+                touched.insert(chunk_coord);
+            }
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        transform.translation = next;
+    }
+
+    for chunk_coord in touched {
+        let Some(chunk_data) = world.chunks.get_mut(&chunk_coord) else {
+            continue;
+        };
+        if let Some(mesh) = meshes.get_mut(&chunk_data.mesh) {
+            *mesh = mesh_from_data(build_chunk_mesh_data(&chunk_data.chunk));
+        }
+    }
 }
 
 // Check if a world position contains a solid block.
@@ -750,7 +914,7 @@ pub fn block_interaction_system(
     let mut last_empty: Option<IVec3> = None;
     let mut hit: Option<IVec3> = None;
     let step = 0.1;
-    let max_distance = 6.0 * BLOCK_SIZE;
+    let max_distance = 10.0 * BLOCK_SIZE;
     let steps = (max_distance / step) as i32;
 
     // Raymarch forward until we hit a solid block or reach max distance.

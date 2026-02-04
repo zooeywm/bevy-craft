@@ -16,8 +16,9 @@ use player::{
 };
 use terrain::height_at;
 use voxel::{
-    Block, Chunk, InteractionCooldown, PreviewBlock, SelectedBlock, WorldState,
+    Block, BlockFallScanTimer, Chunk, InteractionCooldown, PreviewBlock, SelectedBlock, WorldState,
     block_interaction_system, build_chunk_mesh, build_single_block_mesh, chunk_loading_system,
+    spawn_falling_blocks_system, update_falling_blocks_system,
 };
 
 // Chunk width/height/depth in blocks.
@@ -55,6 +56,10 @@ const SHADOW_MAP_SIZE: usize = 256;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .insert_resource(BlockFallScanTimer(Timer::from_seconds(
+            0.08,
+            TimerMode::Repeating,
+        )))
         .add_systems(Startup, (setup_scene, setup_cursor))
         .add_systems(
             Update,
@@ -68,6 +73,8 @@ fn main() {
                 physics_system,
                 camera_follow_system,
                 block_interaction_system,
+                spawn_falling_blocks_system,
+                update_falling_blocks_system,
             ),
         )
         .add_systems(PostUpdate, (preview_follow_system, sun_billboard_system))
