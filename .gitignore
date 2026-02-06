@@ -1,1 +1,5 @@
 /target
+
+# Track only the final atlas under textures.
+assets/textures/**
+!assets/textures/atlas.png

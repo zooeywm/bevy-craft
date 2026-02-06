@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 bevy = "0.18.0"
 futures-lite = "2.3"
-image = "0.25"
+png = "0.18"
