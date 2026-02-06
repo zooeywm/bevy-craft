@@ -5,9 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::BLOCK_SIZE;
 use crate::player::{Player, PlayerBody};
-use crate::{
-    CHUNK_SIZE, LOADS_PER_FRAME, MAX_IN_FLIGHT, VERTICAL_CHUNK_LAYERS, VIEW_DISTANCE,
-};
+use crate::{CHUNK_SIZE, LOADS_PER_FRAME, MAX_IN_FLIGHT, VERTICAL_CHUNK_LAYERS, VIEW_DISTANCE};
 
 use crate::voxel::block_chunk::{Block, Chunk};
 use crate::voxel::mesh::{build_chunk_mesh_data, mesh_from_data};
@@ -18,7 +16,6 @@ use crate::voxel::world_state::{ChunkBuildOutput, ChunkData, WorldState};
 const RAY_STEP: f32 = 0.1;
 /// Max interaction reach measured in block lengths.
 const RAY_MAX_DISTANCE_BLOCKS: f32 = 10.0;
-
 impl WorldState {
     /// Construct an empty runtime world state with a shared material handle.
     pub fn new(material: Handle<StandardMaterial>) -> Self {
@@ -79,7 +76,11 @@ impl WorldState {
     /// Set block at world-space coordinate if containing chunk is loaded.
     ///
     /// Returns containing chunk coord when write succeeds.
-    pub(crate) fn set_block_world_loaded(&mut self, world_pos: IVec3, block: Block) -> Option<IVec3> {
+    pub(crate) fn set_block_world_loaded(
+        &mut self,
+        world_pos: IVec3,
+        block: Block,
+    ) -> Option<IVec3> {
         let (chunk_coord, local) = Self::world_to_chunk_local(world_pos);
         let chunk_data = self.chunks.get_mut(&chunk_coord)?;
         chunk_data.chunk.set_block(local, block);
@@ -232,7 +233,9 @@ impl WorldState {
         camera_query: &Query<&GlobalTransform, With<bevy::camera::Camera3d>>,
     ) -> Option<IVec3> {
         let camera_transform = camera_query.single().ok()?;
-        Some(Self::chunk_center_from_camera_pos(camera_transform.translation()))
+        Some(Self::chunk_center_from_camera_pos(
+            camera_transform.translation(),
+        ))
     }
 
     /// Convert camera world-space position to horizontal center chunk coordinate.
@@ -389,28 +392,25 @@ impl WorldState {
         commands: &mut Commands,
         meshes: &mut ResMut<Assets<Mesh>>,
         player_query: &Query<(&Transform, &Player), With<PlayerBody>>,
+        placement_forward: Vec3,
         target_world: IVec3,
         block: Block,
     ) -> bool {
-        if let Ok((player_transform, player)) = player_query.single()
-            && player.intersects_block(player_transform.translation, target_world)
-        {
-            return false;
+        let mut block_to_place = block;
+        if let Ok((player_transform, player)) = player_query.single() {
+            if player.intersects_block(player_transform.translation, target_world) {
+                return false;
+            }
+            // Use full 3D look direction so front can be any of 6 cardinal directions.
+            block_to_place = block.with_front_from_direction(-placement_forward);
         }
         let Some(chunk_coord) =
-            self.set_block_world_ensured(commands, meshes, target_world, block)
+            self.set_block_world_ensured(commands, meshes, target_world, block_to_place)
         else {
             return false;
         };
         self.rebuild_chunk_mesh(meshes, chunk_coord);
         true
-    }
-
-    /// Return `true` when the world-space block coordinate is air.
-    ///
-    /// Returns `false` when the containing chunk is not loaded.
-    pub(crate) fn is_air_at_world_pos(&self, pos: IVec3) -> bool {
-        self.get_block_world(pos).is_some_and(|block| block.is_air())
     }
 
     /// Ensure a chunk exists at the given coordinate and spawn render entity if missing.
@@ -426,7 +426,8 @@ impl WorldState {
         let chunk = Chunk::new_streaming(coord);
         let mesh = meshes.add(mesh_from_data(build_chunk_mesh_data(&chunk)));
         let entity = self.spawn_chunk_entity(commands, mesh.clone(), coord);
-        self.chunks.insert(coord, ChunkData::new(chunk, mesh, entity));
+        self.chunks
+            .insert(coord, ChunkData::new(chunk, mesh, entity));
     }
 
     /// Unload one chunk and despawn its render entity if present.
@@ -448,7 +449,8 @@ impl WorldState {
     ) {
         let mesh = meshes.add(mesh_from_data(mesh_data));
         let entity = self.spawn_chunk_entity(commands, mesh.clone(), coord);
-        self.chunks.insert(coord, ChunkData::new(chunk, mesh, entity));
+        self.chunks
+            .insert(coord, ChunkData::new(chunk, mesh, entity));
     }
 
     /// Rebuild mesh for one loaded chunk if both chunk and mesh handles exist.
@@ -498,6 +500,8 @@ mod tests {
         let landing_block = IVec3::new(1, 2, 3);
         let touched = state.set_block_world_loaded(landing_block, Block::dirt());
         assert_eq!(touched, Some(chunk_coord));
-        assert!(matches!(state.get_block_world(landing_block), Some(block) if block == Block::dirt()));
+        assert!(
+            matches!(state.get_block_world(landing_block), Some(block) if block == Block::dirt())
+        );
     }
 }

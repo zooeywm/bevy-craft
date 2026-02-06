@@ -4,7 +4,7 @@ use crate::{BLOCK_SIZE, CHUNK_SIZE};
 
 use crate::voxel::block_chunk::{Block, Chunk};
 use crate::voxel::mesh::atlas::BlockAtlas;
-use crate::voxel::mesh_types::{FaceUv, FaceVertices, MeshData, FACE_DEFS};
+use crate::voxel::mesh_types::{FACE_DEFS, FaceUv, FaceVertices, MeshData};
 
 /// Build mesh data for all visible faces in one chunk.
 ///

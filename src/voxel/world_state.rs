@@ -18,7 +18,11 @@ pub struct ChunkData {
 impl ChunkData {
     /// Build runtime chunk data from voxel payload, mesh handle, and entity id.
     pub fn new(chunk: Chunk, mesh: Handle<Mesh>, entity: Entity) -> Self {
-        Self { chunk, mesh, entity }
+        Self {
+            chunk,
+            mesh,
+            entity,
+        }
     }
 }
 

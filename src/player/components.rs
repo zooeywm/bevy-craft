@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-use crate::{BLOCK_SIZE, JUMP_BOOST_DURATION};
 use crate::voxel::Block;
 use crate::voxel::WorldState;
+use crate::{BLOCK_SIZE, JUMP_BOOST_DURATION};
 
 /// Camera controller state used by first-person look and follow systems.
 #[derive(Component)]
@@ -307,10 +307,7 @@ impl Player {
             return;
         }
 
-        if prevent_fall
-            && axis != Vec3::Y
-            && !world.has_ground_support(candidate, self.half_size)
-        {
+        if prevent_fall && axis != Vec3::Y && !world.has_ground_support(candidate, self.half_size) {
             if axis == Vec3::X {
                 vel.x = 0.0;
             } else {
@@ -335,12 +332,17 @@ impl PlayerController {
     const SPRINT_MULTIPLIER: f32 = 1.5;
     /// Base speed multiplier applied in flying mode.
     const FLY_MULTIPLIER: f32 = 5.0;
+    /// Sneak-speed ratio, close to Minecraft walk/sneak ratio (~0.3x).
+    const CROUCH_MULTIPLIER: f32 = 0.3;
 
     /// Compute current movement speed from stance and sprint state.
-    pub fn move_speed(&self, flying: bool, sprinting: bool) -> f32 {
+    pub fn move_speed(&self, flying: bool, sprinting: bool, crouching: bool) -> f32 {
         let mut speed = self.speed;
         if flying {
             speed *= Self::FLY_MULTIPLIER;
+        }
+        if !flying && crouching {
+            speed *= Self::CROUCH_MULTIPLIER;
         }
         if sprinting {
             speed *= Self::SPRINT_MULTIPLIER;
@@ -349,11 +351,17 @@ impl PlayerController {
     }
 
     /// Convert desired direction into final wish velocity.
-    pub fn wish_velocity(&self, direction: Vec3, flying: bool, sprinting: bool) -> Vec3 {
+    pub fn wish_velocity(
+        &self,
+        direction: Vec3,
+        flying: bool,
+        sprinting: bool,
+        crouching: bool,
+    ) -> Vec3 {
         if direction == Vec3::ZERO {
             return Vec3::ZERO;
         }
-        direction.normalize() * self.move_speed(flying, sprinting)
+        direction.normalize() * self.move_speed(flying, sprinting, crouching)
     }
 
     /// Build movement controller with base speed.

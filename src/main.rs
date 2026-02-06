@@ -1,11 +1,11 @@
 use bevy::image::ImagePlugin;
 use bevy::prelude::*;
 
+mod material_catalog;
 mod player;
 mod scene;
 mod terrain;
 mod voxel;
-mod material_catalog;
 
 use player::{
     camera_follow_system, camera_look_system, camera_move_system, crouch_system,
@@ -13,7 +13,7 @@ use player::{
 };
 use scene::{setup_cursor, setup_scene, sun_billboard_system};
 use voxel::{
-    BlockFallScanTimer, block_interaction_system, chunk_loading_system,
+    FallingPropagationQueue, block_interaction_system, chunk_loading_system,
     spawn_falling_blocks_system, update_falling_blocks_system,
 };
 
@@ -52,7 +52,7 @@ const SHADOW_MAP_SIZE: usize = 1024;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .insert_resource(BlockFallScanTimer::new(0.08))
+        .insert_resource(FallingPropagationQueue::default())
         .add_systems(Startup, (setup_scene, setup_cursor))
         .add_systems(
             Update,

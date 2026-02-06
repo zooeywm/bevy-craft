@@ -26,7 +26,8 @@ pub fn camera_follow_system(
 ) {
     for (mut cam_transform, camera) in &mut camera_query {
         if let Ok((body_transform, player)) = body_query.get(camera.target) {
-            cam_transform.translation = camera.follow_translation(body_transform.translation, player);
+            cam_transform.translation =
+                camera.follow_translation(body_transform.translation, player);
         }
     }
 }

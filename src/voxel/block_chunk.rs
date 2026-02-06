@@ -1,66 +1,197 @@
 use bevy::prelude::*;
 
-use crate::terrain::TerrainNoise;
-use crate::{BLOCK_SIZE, CHUNK_SIZE, VERTICAL_CHUNK_LAYERS};
-use crate::voxel::block_defs::def_for_block;
-use crate::voxel::block_defs::texture_for_face;
 use crate::material_catalog::TextureId;
+use crate::terrain::TerrainNoise;
+use crate::voxel::block_defs::def_for_block_kind;
+use crate::voxel::block_defs::texture_for_face;
+use crate::{BLOCK_SIZE, CHUNK_SIZE, VERTICAL_CHUNK_LAYERS};
 
-/// Voxel block state stored in chunk cells.
+/// 3D front orientation stored on direction-sensitive blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Block {
+pub enum Facing {
+    /// Front points to world +X.
+    PosX,
+    /// Front points to world -X.
+    NegX,
+    /// Front points to world +Y.
+    PosY,
+    /// Front points to world -Y.
+    NegY,
+    /// Front points to world +Z.
+    PosZ,
+    /// Front points to world -Z.
+    NegZ,
+}
+
+impl Facing {
+    /// Resolve nearest cardinal 3D facing from a world-space direction vector.
+    pub fn from_direction(direction: Vec3) -> Self {
+        if direction.length_squared() == 0.0 {
+            Self::PosZ
+        } else if direction.x.abs() >= direction.y.abs() && direction.x.abs() >= direction.z.abs() {
+            if direction.x >= 0.0 {
+                Self::PosX
+            } else {
+                Self::NegX
+            }
+        } else if direction.y.abs() >= direction.x.abs() && direction.y.abs() >= direction.z.abs() {
+            if direction.y >= 0.0 {
+                Self::PosY
+            } else {
+                Self::NegY
+            }
+        } else if direction.z >= 0.0 {
+            Self::PosZ
+        } else {
+            Self::NegZ
+        }
+    }
+
+    /// Resolve nearest cardinal horizontal facing (never returns +Y/-Y).
+    pub fn from_horizontal_direction(direction: Vec3) -> Self {
+        if direction.x.abs() >= direction.z.abs() {
+            if direction.x >= 0.0 {
+                Self::PosX
+            } else {
+                Self::NegX
+            }
+        } else if direction.z >= 0.0 {
+            Self::PosZ
+        } else {
+            Self::NegZ
+        }
+    }
+
+    /// Return this facing as a world-space unit normal.
+    pub const fn as_normal(self) -> IVec3 {
+        match self {
+            Self::PosX => IVec3::X,
+            Self::NegX => IVec3::NEG_X,
+            Self::PosY => IVec3::Y,
+            Self::NegY => IVec3::NEG_Y,
+            Self::PosZ => IVec3::Z,
+            Self::NegZ => IVec3::NEG_Z,
+        }
+    }
+}
+
+/// Semantic block kind used for behavior/material lookup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BlockKind {
     /// Empty cell with no geometry or collision.
     Air,
     /// Plain dirt block.
     Dirt,
     /// Dirt block with grass textures on top/sides.
     DirtWithGrass,
+    /// Sand block affected by gravity when unsupported.
+    Sand,
+}
+
+/// Voxel block state stored in chunk cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Block {
+    /// Semantic kind of this block.
+    pub kind: BlockKind,
+    /// Local "front" direction used to resolve front/back face materials.
+    pub front: Facing,
 }
 
 impl Block {
     /// Construct an air block.
     pub fn air() -> Self {
-        Self::Air
+        Self {
+            kind: BlockKind::Air,
+            front: Facing::PosZ,
+        }
     }
 
     /// Construct a plain dirt block without grass overlay.
     pub fn dirt() -> Self {
-        Self::Dirt
+        Self {
+            kind: BlockKind::Dirt,
+            front: Facing::PosZ,
+        }
+    }
+
+    /// Construct a plain dirt block with an explicit local front.
+    pub fn dirt_facing(front: Facing) -> Self {
+        Self {
+            kind: BlockKind::Dirt,
+            front,
+        }
     }
 
     /// Construct a dirt block with grass overlay enabled.
     pub fn dirt_with_grass() -> Self {
-        Self::DirtWithGrass
+        Self {
+            kind: BlockKind::DirtWithGrass,
+            front: Facing::PosZ,
+        }
+    }
+
+    /// Construct a dirt-with-grass block with an explicit local front.
+    pub fn dirt_with_grass_facing(front: Facing) -> Self {
+        Self {
+            kind: BlockKind::DirtWithGrass,
+            front,
+        }
+    }
+
+    /// Construct a sand block.
+    pub fn sand() -> Self {
+        Self {
+            kind: BlockKind::Sand,
+            front: Facing::PosZ,
+        }
+    }
+
+    /// Construct a sand block with an explicit local front.
+    pub fn sand_facing(front: Facing) -> Self {
+        Self {
+            kind: BlockKind::Sand,
+            front,
+        }
     }
 
     /// Return `true` if this block is air.
     pub fn is_air(&self) -> bool {
-        matches!(self, Block::Air)
+        matches!(self.kind, BlockKind::Air)
     }
 
     /// Return `true` if this block should not fall under gravity rules.
     pub fn is_stable(&self) -> bool {
-        def_for_block(*self).stable
+        def_for_block_kind(self.kind).stable
     }
 
     /// Return `true` if interaction systems can operate on this block.
     pub fn is_interactable(&self) -> bool {
-        def_for_block(*self).interactable
-    }
-
-    /// Return `true` if this block should start falling when unsupported.
-    pub fn is_falling_candidate(&self) -> bool {
-        self.is_solid() && !self.is_stable()
+        def_for_block_kind(self.kind).interactable
     }
 
     /// Return `true` if this block occupies space (non-air).
     pub fn is_solid(&self) -> bool {
-        def_for_block(*self).solid
+        def_for_block_kind(self.kind).solid
     }
 
     /// Resolve atlas texture id for one face normal.
     pub fn texture_for_face(&self, normal: IVec3) -> TextureId {
         texture_for_face(*self, normal)
+    }
+
+    /// Return a copy of this block whose front matches the given world-space direction.
+    pub fn with_front_from_direction(self, direction: Vec3) -> Self {
+        let front = if def_for_block_kind(self.kind).allow_vertical_front {
+            Facing::from_direction(direction)
+        } else {
+            Facing::from_horizontal_direction(direction)
+        };
+        match self.kind {
+            BlockKind::Dirt => Self::dirt_facing(front),
+            BlockKind::DirtWithGrass => Self::dirt_with_grass_facing(front),
+            BlockKind::Sand => Self::sand_facing(front),
+            BlockKind::Air => self,
+        }
     }
 
     /// Convert a world-space block coordinate to its minimum world-space corner.
@@ -180,17 +311,18 @@ mod tests {
         assert!(air.is_air());
         assert!(!air.is_solid());
         assert!(!air.is_stable());
-        assert!(!air.is_falling_candidate());
 
         let dirt = Block::dirt();
         assert!(!dirt.is_air());
         assert!(dirt.is_solid());
         assert!(dirt.is_stable());
-        assert!(!dirt.is_falling_candidate());
 
         let grass_dirt = Block::dirt_with_grass();
         assert!(grass_dirt.is_solid());
         assert!(grass_dirt.is_stable());
-        assert!(!grass_dirt.is_falling_candidate());
+
+        let sand = Block::sand();
+        assert!(sand.is_solid());
+        assert!(!sand.is_stable());
     }
 }

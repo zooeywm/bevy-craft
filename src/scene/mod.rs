@@ -25,7 +25,11 @@ impl SunBillboard {
     }
 
     /// Apply billboard translation/orientation so the quad always faces the camera.
-    pub(crate) fn apply_to_transform(&self, camera_transform: &Transform, transform: &mut Transform) {
+    pub(crate) fn apply_to_transform(
+        &self,
+        camera_transform: &Transform,
+        transform: &mut Transform,
+    ) {
         transform.translation = camera_transform.translation + self.direction * self.distance;
         transform.look_at(camera_transform.translation, Vec3::Y);
     }

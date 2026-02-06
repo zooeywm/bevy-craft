@@ -1,45 +1,45 @@
 use bevy::prelude::*;
 use std::collections::HashSet;
 
-use crate::{CHUNK_SIZE, GRAVITY};
+use crate::GRAVITY;
 
+use crate::voxel::FallingPropagationQueue;
 use crate::voxel::block_chunk::Block;
-use crate::voxel::falling_state::{BlockFallScanTimer, FallingBlock};
+use crate::voxel::falling_state::FallingBlock;
 use crate::voxel::mesh::build_single_block_mesh;
 use crate::voxel::world_state::WorldState;
 
-/// Scan loaded chunks for unstable blocks and spawn falling entities.
+/// Max propagation nodes processed per frame to avoid long spikes.
+const MAX_PROPAGATION_STEPS_PER_FRAME: usize = 256;
+
+/// Return whether a block at `world_pos` should detach and become a falling entity.
+fn should_start_falling(world: &WorldState, world_pos: IVec3, block: Block) -> bool {
+    if !block.is_solid() || block.is_stable() {
+        return false;
+    }
+
+    // Unstable blocks (sand-like): only check support below.
+    let below = world_pos + IVec3::new(0, -1, 0);
+    below.y >= 0 && !world.is_solid_at_world_pos(below)
+}
+
+/// Process falling propagation queue and spawn falling entities for unstable positions.
 pub fn spawn_falling_blocks_system(
     mut commands: Commands,
-    time: Res<Time>,
-    mut timer: ResMut<BlockFallScanTimer>,
+    mut queue: ResMut<FallingPropagationQueue>,
     mut world: ResMut<WorldState>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    if !timer.should_scan(time.delta()) {
-        return;
-    }
-
     let mut to_spawn: Vec<(IVec3, Block)> = Vec::new();
-    for (chunk_coord, chunk_data) in world.chunks.iter() {
-        let base = *chunk_coord * CHUNK_SIZE;
-        for z in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for x in 0..CHUNK_SIZE {
-                    let block = chunk_data.chunk.get_block(IVec3::new(x, y, z));
-                    if !block.is_falling_candidate() {
-                        continue;
-                    }
-                    let world_pos = base + IVec3::new(x, y, z);
-                    let below = world_pos + IVec3::new(0, -1, 0);
-                    if below.y < 0 {
-                        continue;
-                    }
-                    if world.is_air_at_world_pos(below) {
-                        to_spawn.push((world_pos, block));
-                    }
-                }
-            }
+    for _ in 0..MAX_PROPAGATION_STEPS_PER_FRAME {
+        let Some(world_pos) = queue.pop() else {
+            break;
+        };
+        let Some(block) = world.get_block_world(world_pos) else {
+            continue;
+        };
+        if should_start_falling(&world, world_pos, block) {
+            to_spawn.push((world_pos, block));
         }
     }
 
@@ -65,6 +65,9 @@ pub fn spawn_falling_blocks_system(
             FallingBlock::new(block),
             Name::new("FallingBlock"),
         ));
+
+        // Block removal may destabilize surrounding neighbors.
+        queue.enqueue_with_neighbors(world_pos);
     }
 
     world.rebuild_touched_chunk_meshes(&mut meshes, touched);
@@ -88,12 +91,9 @@ pub fn update_falling_blocks_system(
         let (below, landing_block) = FallingBlock::landing_probe(next);
 
         if below.y >= 0 && world.is_solid_at_world_pos(below) {
-            if let Some(chunk_coord) = world.settle_falling_block(
-                &mut commands,
-                &mut meshes,
-                landing_block,
-                falling.block,
-            ) {
+            if let Some(chunk_coord) =
+                world.settle_falling_block(&mut commands, &mut meshes, landing_block, falling.block)
+            {
                 touched.insert(chunk_coord);
             }
             commands.entity(entity).despawn();

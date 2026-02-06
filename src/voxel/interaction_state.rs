@@ -21,6 +21,8 @@ impl SelectedBlock {
     const SELECT_BLOCK_KEY_1: KeyCode = KeyCode::Digit1;
     /// Hotkey for selecting plain dirt block.
     const SELECT_BLOCK_KEY_2: KeyCode = KeyCode::Digit2;
+    /// Hotkey for selecting sand block.
+    const SELECT_BLOCK_KEY_3: KeyCode = KeyCode::Digit3;
 
     /// Apply block-selection hotkeys and refresh preview mesh when selection changes.
     pub(crate) fn apply_hotkeys(
@@ -34,6 +36,9 @@ impl SelectedBlock {
         }
         if keys.just_pressed(Self::SELECT_BLOCK_KEY_2) {
             self.set_with_preview(Block::dirt(), meshes, preview_query);
+        }
+        if keys.just_pressed(Self::SELECT_BLOCK_KEY_3) {
+            self.set_with_preview(Block::sand(), meshes, preview_query);
         }
     }
 

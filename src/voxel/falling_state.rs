@@ -1,25 +1,45 @@
 use bevy::prelude::*;
+use std::collections::{HashSet, VecDeque};
 
 use crate::BLOCK_SIZE;
 
 use crate::voxel::block_chunk::Block;
 
-#[derive(Resource)]
-/// Timer resource wrapper that controls falling-block scan frequency.
-pub struct BlockFallScanTimer(
-    /// Bevy timer used by the periodic falling-block scan.
-    pub Timer,
-);
+#[derive(Resource, Default)]
+/// Queue of world positions that need falling-support re-evaluation.
+pub struct FallingPropagationQueue {
+    /// Pending positions to process.
+    pending: VecDeque<IVec3>,
+    /// Set used to deduplicate pending positions.
+    scheduled: HashSet<IVec3>,
+}
 
-impl BlockFallScanTimer {
-    /// Build repeating scan timer with given interval seconds.
-    pub fn new(interval_secs: f32) -> Self {
-        Self(Timer::from_seconds(interval_secs, TimerMode::Repeating))
+impl FallingPropagationQueue {
+    /// Enqueue one world block position for propagation.
+    pub fn enqueue(&mut self, pos: IVec3) {
+        if self.scheduled.insert(pos) {
+            self.pending.push_back(pos);
+        }
     }
 
-    /// Tick scan timer and return whether this frame should run falling scan.
-    pub fn should_scan(&mut self, delta: std::time::Duration) -> bool {
-        self.0.tick(delta).just_finished()
+    /// Enqueue one world position and its affected neighbors for support propagation.
+    ///
+    /// We intentionally skip downward propagation: support loss/gain impacts the
+    /// changed block itself, its horizontal neighbors, and blocks above.
+    pub fn enqueue_with_neighbors(&mut self, pos: IVec3) {
+        self.enqueue(pos);
+        self.enqueue(pos + IVec3::new(1, 0, 0));
+        self.enqueue(pos + IVec3::new(-1, 0, 0));
+        self.enqueue(pos + IVec3::new(0, 1, 0));
+        self.enqueue(pos + IVec3::new(0, 0, 1));
+        self.enqueue(pos + IVec3::new(0, 0, -1));
+    }
+
+    /// Pop one pending position from the queue.
+    pub fn pop(&mut self) -> Option<IVec3> {
+        let pos = self.pending.pop_front()?;
+        self.scheduled.remove(&pos);
+        Some(pos)
     }
 }
 

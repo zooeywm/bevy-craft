@@ -3,7 +3,9 @@ use bevy::image::{CompressedImageFormats, Image, ImageSampler, ImageType};
 #[path = "../material_catalog.rs"]
 mod material_catalog;
 
-use material_catalog::{TextureId, atlas_texture_order, source_filename};
+use material_catalog::{
+    TextureId, atlas_texture_order, source_base_filename, source_overlay_filename,
+};
 use png::{BitDepth, ColorType, Encoder};
 use std::env;
 use std::fs;
@@ -43,7 +45,9 @@ fn parse_args() -> Result<(PathBuf, PathBuf), String> {
                 output = PathBuf::from(value);
             }
             "--help" | "-h" => {
-                let program = env::args().next().unwrap_or_else(|| "make_atlas".to_string());
+                let program = env::args()
+                    .next()
+                    .unwrap_or_else(|| "make_atlas".to_string());
                 print_usage(&program);
                 std::process::exit(0);
             }
@@ -115,6 +119,52 @@ fn ensure_same_size(images: &[(&str, &RgbaTexture)]) -> Result<(u32, u32), Strin
     Ok((w, h))
 }
 
+/// Composite `top` over `base` using non-premultiplied alpha.
+fn alpha_blend(base: &RgbaTexture, top: &RgbaTexture) -> Result<RgbaTexture, String> {
+    if base.width != top.width || base.height != top.height {
+        return Err(format!(
+            "Overlay size mismatch: base {}x{}, overlay {}x{}",
+            base.width, base.height, top.width, top.height
+        ));
+    }
+    let mut out = base.data.clone();
+    for (dst_px, src_px) in out
+        .chunks_exact_mut(RGBA_STRIDE)
+        .zip(top.data.chunks_exact(RGBA_STRIDE))
+    {
+        let dst_r = dst_px[0] as f32 / 255.0;
+        let dst_g = dst_px[1] as f32 / 255.0;
+        let dst_b = dst_px[2] as f32 / 255.0;
+        let dst_a = dst_px[3] as f32 / 255.0;
+        let src_r = src_px[0] as f32 / 255.0;
+        let src_g = src_px[1] as f32 / 255.0;
+        let src_b = src_px[2] as f32 / 255.0;
+        let src_a = src_px[3] as f32 / 255.0;
+
+        let out_a = src_a + dst_a * (1.0 - src_a);
+        let (out_r, out_g, out_b) = if out_a > 0.0 {
+            (
+                (src_r * src_a + dst_r * dst_a * (1.0 - src_a)) / out_a,
+                (src_g * src_a + dst_g * dst_a * (1.0 - src_a)) / out_a,
+                (src_b * src_a + dst_b * dst_a * (1.0 - src_a)) / out_a,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        dst_px[0] = (out_r * 255.0).round().clamp(0.0, 255.0) as u8;
+        dst_px[1] = (out_g * 255.0).round().clamp(0.0, 255.0) as u8;
+        dst_px[2] = (out_b * 255.0).round().clamp(0.0, 255.0) as u8;
+        dst_px[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+
+    Ok(RgbaTexture {
+        width: base.width,
+        height: base.height,
+        data: out,
+    })
+}
+
 /// Build atlas RGBA bytes in horizontal order from provided tile list.
 fn build_atlas_data(tiles: &[RgbaTexture]) -> Vec<u8> {
     let tile_w = tiles[0].width as usize;
@@ -142,8 +192,12 @@ fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
-    fs::create_dir_all(parent)
-        .map_err(|e| format!("Failed to create output directory {}: {e}", parent.display()))
+    fs::create_dir_all(parent).map_err(|e| {
+        format!(
+            "Failed to create output directory {}: {e}",
+            parent.display()
+        )
+    })
 }
 
 /// Encode RGBA8 bytes to PNG file.
@@ -167,10 +221,19 @@ fn main() -> Result<(), String> {
 
     let mut tiles: Vec<(TextureId, String, RgbaTexture)> = Vec::new();
     for texture in atlas_texture_order() {
-        let filename = source_filename(*texture);
-        let path = source_dir.join(filename);
-        let decoded = load_rgba8(&path)?;
-        tiles.push((*texture, filename.to_string(), decoded));
+        let base_filename = source_base_filename(*texture);
+        let base_path = source_dir.join(base_filename);
+        let base = load_rgba8(&base_path)?;
+
+        let final_tile = if let Some(overlay_filename) = source_overlay_filename(*texture) {
+            let overlay_path = source_dir.join(overlay_filename);
+            let overlay = load_rgba8(&overlay_path)?;
+            alpha_blend(&base, &overlay)?
+        } else {
+            base
+        };
+
+        tiles.push((*texture, base_filename.to_string(), final_tile));
     }
     let refs: Vec<(&str, &RgbaTexture)> = tiles
         .iter()

@@ -21,7 +21,7 @@ impl BlockAtlas {
         }
     }
 
-    /// Build UVs for one tile in the 1x3 atlas.
+    /// Build UVs for one tile in the 1xN horizontal atlas.
     fn face_uvs(tile: u32) -> FaceUv {
         let atlas_tiles_x = atlas_tiles_x();
         let u0 = tile as f32 / atlas_tiles_x;

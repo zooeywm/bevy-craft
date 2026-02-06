@@ -16,6 +16,7 @@ pub fn camera_move_system(
                 direction,
                 true,
                 input.pressed(KeyCode::ShiftLeft),
+                player.crouching,
             );
             velocity.0 = wish;
             player.jump_boost_time = 0.0;
@@ -24,6 +25,7 @@ pub fn camera_move_system(
                 direction,
                 false,
                 input.pressed(KeyCode::ShiftLeft),
+                player.crouching,
             );
             player.apply_horizontal_movement(&mut velocity.0, wish);
 

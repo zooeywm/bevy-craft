@@ -1,9 +1,16 @@
 use bevy::prelude::*;
 
-use crate::player::{Player, PlayerBody};
 use crate::player::PreviewBlock;
+use crate::player::{Player, PlayerBody};
+use crate::voxel::FallingPropagationQueue;
 use crate::voxel::interaction_state::{InteractionCooldown, SelectedBlock};
 use crate::voxel::world_state::WorldState;
+
+/// Return `true` only when `candidate` is one of six face-neighbors of `center`.
+fn is_face_neighbor(center: IVec3, candidate: IVec3) -> bool {
+    let d = candidate - center;
+    d.x.abs() + d.y.abs() + d.z.abs() == 1
+}
 
 /// Handle block breaking and placing with cooldown and preview updates.
 #[allow(clippy::too_many_arguments)]
@@ -19,6 +26,7 @@ pub fn block_interaction_system(
     mut preview_query: Query<&mut bevy::mesh::Mesh3d, With<PreviewBlock>>,
     keys: Res<ButtonInput<KeyCode>>,
     player_query: Query<(&Transform, &Player), With<PlayerBody>>,
+    mut falling_queue: ResMut<FallingPropagationQueue>,
 ) {
     selected.apply_hotkeys(&keys, &mut meshes, &mut preview_query);
 
@@ -42,6 +50,7 @@ pub fn block_interaction_system(
             if !world.break_block(&mut meshes, target_world) {
                 return;
             }
+            falling_queue.enqueue_with_neighbors(target_world);
             cooldown.mark_break(&time);
         } else {
             return;
@@ -50,15 +59,19 @@ pub fn block_interaction_system(
 
     // Place on the last empty position before a hit.
     if can_place
-        && let (Some(_), Some(target_world)) = (hit, last_empty)
+        && let (Some(hit_world), Some(target_world)) = (hit, last_empty)
+        && is_face_neighbor(hit_world, target_world)
         && world.place_block(
             &mut commands,
             &mut meshes,
             &player_query,
+            camera_transform.forward().as_vec3(),
             target_world,
             selected.current,
         )
     {
+        // Re-check placed block immediately so unsupported gravity blocks fall right away.
+        falling_queue.enqueue(target_world);
         cooldown.mark_place(&time);
     }
 }
@@ -68,9 +81,9 @@ mod tests {
     use bevy::prelude::*;
 
     use super::*;
+    use crate::voxel::WorldState;
     use crate::voxel::block_chunk::{Block, Chunk};
     use crate::voxel::world_state::ChunkData;
-    use crate::voxel::WorldState;
 
     /// Verify raymarch reports first solid hit and last empty block before that hit.
     #[test]

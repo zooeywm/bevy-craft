@@ -1,17 +1,23 @@
 /// Shared texture ids used by both runtime atlas sampling and atlas builder tool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextureId {
-    /// Side texture for grass-over-dirt blocks.
+    /// Left/right texture for grass-over-dirt blocks.
     GrassSide,
     /// Top texture for grass-over-dirt blocks.
     GrassTop,
     /// Dirt texture.
     Dirt,
+    /// Sand texture.
+    Sand,
 }
 
 /// Stable atlas tile order used by runtime UV lookup and atlas generation.
-pub const ATLAS_TEXTURE_ORDER: [TextureId; 3] =
-    [TextureId::GrassSide, TextureId::GrassTop, TextureId::Dirt];
+pub const ATLAS_TEXTURE_ORDER: [TextureId; 4] = [
+    TextureId::GrassSide,
+    TextureId::GrassTop,
+    TextureId::Dirt,
+    TextureId::Sand,
+];
 
 /// Return atlas tile order as a slice.
 #[allow(dead_code, reason = "used by atlas tool binary")]
@@ -21,11 +27,23 @@ pub const fn atlas_texture_order() -> &'static [TextureId] {
 
 /// Return the source texture file name for one texture id.
 #[allow(dead_code, reason = "used by atlas tool binary")]
-pub const fn source_filename(texture: TextureId) -> &'static str {
+pub const fn source_base_filename(texture: TextureId) -> &'static str {
     match texture {
-        TextureId::GrassSide => "default_grass_side.png",
+        TextureId::GrassSide => "default_dirt.png",
         TextureId::GrassTop => "default_grass.png",
         TextureId::Dirt => "default_dirt.png",
+        TextureId::Sand => "default_sand.png",
+    }
+}
+
+/// Return optional overlay texture file name for one texture id.
+#[allow(dead_code, reason = "used by atlas tool binary")]
+pub const fn source_overlay_filename(texture: TextureId) -> Option<&'static str> {
+    match texture {
+        TextureId::GrassSide => Some("default_grass_side.png"),
+        TextureId::GrassTop => None,
+        TextureId::Dirt => None,
+        TextureId::Sand => None,
     }
 }
 
@@ -42,6 +60,7 @@ pub const fn atlas_tile_index(texture: TextureId) -> u32 {
         TextureId::GrassSide => 0,
         TextureId::GrassTop => 1,
         TextureId::Dirt => 2,
+        TextureId::Sand => 3,
     }
 }
 
