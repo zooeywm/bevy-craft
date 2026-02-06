@@ -50,7 +50,7 @@ const STAND_EYE_HEIGHT: f32 = 1.8 * BLOCK_SIZE;
 // Eye height when crouching (in world units).
 const CROUCH_EYE_HEIGHT: f32 = 0.8 * BLOCK_SIZE;
 // Shadow map resolution for directional light (lower = faster).
-const SHADOW_MAP_SIZE: usize = 256;
+const SHADOW_MAP_SIZE: usize = 1024;
 
 // App entry point and system registration.
 fn main() {
@@ -89,11 +89,11 @@ fn setup_scene(
     mut images: ResMut<Assets<Image>>,
 ) {
     // Sky-like background color.
-    commands.insert_resource(ClearColor(Color::srgb(0.6, 0.75, 0.95)));
+    commands.insert_resource(ClearColor(Color::srgb(0.52, 0.74, 0.88)));
     // Global ambient light to avoid fully black backfaces.
     commands.insert_resource(bevy::light::GlobalAmbientLight {
-        color: Color::srgb(0.8, 0.8, 0.8),
-        brightness: 10_000.0,
+        color: Color::srgb(0.72, 0.78, 0.90),
+        brightness: 3_600.0,
         affects_lightmapped_meshes: true,
     });
     // Reduce shadow map resolution to improve performance.
@@ -162,8 +162,8 @@ fn setup_scene(
     let sun_position = Vec3::new(60.0, 50.0, 60.0);
     commands.spawn((
         bevy::light::DirectionalLight {
-            illuminance: 30_000.0,
-            color: Color::srgb(1.0, 0.98, 0.95),
+            illuminance: 14_000.0,
+            color: Color::srgb(1.0, 0.97, 0.90),
             shadows_enabled: true,
             ..default()
         },
